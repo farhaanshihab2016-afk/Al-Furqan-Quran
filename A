@@ -1,0 +1,75 @@
+import { Link } from "@tanstack/react-router";
+import { Search, Settings2, User as UserIcon } from "lucide-react";
+import logoAsset from "@/assets/al-furqan-logo.png.asset.json";
+import type { Chapter } from "@/lib/quran.types";
+
+interface SurahListProps {
+  chapters: Chapter[];
+  currentId: number;
+}
+
+export function SurahList({ chapters, currentId }: SurahListProps) {
+  return (
+    <aside className="flex shrink-0 flex-col border-b bg-card lg:h-screen lg:w-80 lg:border-b-0 lg:border-r">
+      <div className="flex items-center gap-3 border-b px-5 py-4">
+        <img src={logoAsset.url} alt="Al-Furqan logo" className="h-9 w-9 shrink-0 rounded-full" />
+        <div className="flex-1">
+          <h1 className="text-lg font-semibold leading-tight text-card-foreground">Al-Furqan</h1>
+          <p className="text-xs text-muted-foreground">Read &amp; listen</p>
+        </div>
+        <div className="ml-auto flex items-center gap-1.5">
+          <Link
+            to="/search"
+            aria-label="Search surahs"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border text-muted-foreground transition-colors hover:bg-secondary hover:text-secondary-foreground"
+          >
+            <Search className="h-4 w-4" />
+          </Link>
+          <Link
+            to="/auth"
+            aria-label="Account"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border text-muted-foreground transition-colors hover:bg-secondary hover:text-secondary-foreground"
+          >
+            <UserIcon className="h-4 w-4" />
+          </Link>
+          <Link
+            to="/settings"
+            aria-label="Settings"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border text-muted-foreground transition-colors hover:bg-secondary hover:text-secondary-foreground"
+          >
+            <Settings2 className="h-4 w-4" />
+          </Link>
+        </div>
+      </div>
+
+      <nav className="flex flex-col gap-1 overflow-y-auto p-3">
+        {chapters.map((chapter) => {
+          const isActive = chapter.id === currentId;
+          return (
+            <Link
+              key={chapter.id}
+              to="/surah/$number"
+              params={{ number: String(chapter.id) }}
+              className={[
+                "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors",
+                "hover:bg-secondary hover:text-secondary-foreground",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                isActive
+                  ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                  : "text-card-foreground",
+              ].join(" ")}
+            >
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-background/20 text-xs font-medium">
+                {chapter.id}
+              </span>
+              <span className="flex-1 truncate font-medium">{chapter.name_simple}</span>
+              <span className="shrink-0 text-base" style={{ fontFamily: "var(--font-arabic)" }}>
+                {chapter.name_arabic}
+              </span>
+            </Link>
+          );
+        })}
+      </nav>
+    </aside>
+  );
+}
