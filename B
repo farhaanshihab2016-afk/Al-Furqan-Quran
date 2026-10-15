@@ -1,0 +1,356 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
+import { Loader2, Pause, Play, Settings2, SkipBack, SkipForward, Square } from "lucide-react";
+import { getChapterAudio } from "@/lib/quran.functions";
+import { saveLastRead, useSettings } from "@/lib/settings";
+import type { Chapter, Verse } from "@/lib/quran.types";
+
+interface VerseViewProps {
+  chapter: Chapter;
+  verses: Verse[];
+  initialVerse?: number;
+}
+
+export function VerseView({ chapter, verses, initialVerse }: VerseViewProps) {
+  const { settings } = useSettings();
+  const [audioEnabled, setAudioEnabled] = useState(false);
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const pendingIndex = useRef<number | null>(null);
+  const targetVerse = initialVerse ?? 1;
+  const restoring = useRef(false);
+
+  // Scroll to the requested verse (resume / deep link).
+  useEffect(() => {
+    saveLastRead({ surah: chapter.id, verse: targetVerse });
+    if (targetVerse <= 1) return;
+    const go = () =>
+      document
+        .getElementById(`verse-${chapter.id}-${targetVerse}`)
+        ?.scrollIntoView({ block: "start" });
+    restoring.current = true;
+    go();
+    const done = window.setTimeout(() => (restoring.current = false), 3200);
+    // Retry after the splash screen releases scrolling.
+    const timers = [400, 1500, 3000].map((ms) => window.setTimeout(go, ms));
+    return () => {
+      timers.forEach((t) => window.clearTimeout(t));
+      window.clearTimeout(done);
+      restoring.current = false;
+    };
+  }, [chapter.id, targetVerse]);
+
+  // Track the verse currently being read.
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting || restoring.current) continue;
+          const n = Number((entry.target as HTMLElement).dataset["verse"]);
+          if (n) saveLastRead({ surah: chapter.id, verse: n });
+        }
+      },
+      { rootMargin: "0px 0px -70% 0px" },
+    );
+    document.querySelectorAll("[data-verse]").forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, [chapter.id, verses]);
+
+  useEffect(() => {
+    if (activeIndex !== null) {
+      saveLastRead({ surah: chapter.id, verse: activeIndex + 1 });
+      document
+        .getElementById(`verse-${chapter.id}-${activeIndex + 1}`)
+        ?.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }, [activeIndex, chapter.id]);
+
+  const audioQuery = useQuery({
+    queryKey: ["quran", "audio", chapter.id, settings.reciterId],
+    queryFn: () =>
+      getChapterAudio({ data: { chapterNumber: chapter.id, reciterId: settings.reciterId } }),
+    enabled: audioEnabled,
+    staleTime: 1000 * 60 * 60,
+  });
+
+  const urls = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const file of audioQuery.data ?? []) map.set(file.verse_key, file.url);
+    return verses.map((verse) => map.get(verse.verse_key));
+  }, [audioQuery.data, verses]);
+
+  // Reset player when the chapter or reciter changes.
+  useEffect(() => {
+    audioRef.current?.pause();
+    setActiveIndex(null);
+    setIsPlaying(false);
+    pendingIndex.current = null;
+  }, [chapter.id, settings.reciterId]);
+
+  const playIndex = useCallback(
+    (index: number) => {
+      if (index < 0 || index >= verses.length) {
+        setIsPlaying(false);
+        setActiveIndex(null);
+        return;
+      }
+      setActiveIndex(index);
+      setIsPlaying(true);
+      if (!audioEnabled) {
+        pendingIndex.current = index;
+        setAudioEnabled(true);
+        return;
+      }
+      const url = urls[index];
+      if (!url) {
+        pendingIndex.current = index;
+        return;
+      }
+      const el = audioRef.current;
+      if (!el) return;
+      el.src = url;
+      void el.play().catch(() => setIsPlaying(false));
+    },
+    [audioEnabled, urls, verses.length],
+  );
+
+  // Once audio URLs arrive, start the verse the user asked for.
+  useEffect(() => {
+    if (pendingIndex.current === null || !audioQuery.data) return;
+    const index = pendingIndex.current;
+    pendingIndex.current = null;
+    const url = urls[index];
+    const el = audioRef.current;
+    if (!url || !el) return;
+    el.src = url;
+    void el.play().catch(() => setIsPlaying(false));
+  }, [audioQuery.data, urls]);
+
+  const toggle = (index: number) => {
+    if (activeIndex === index && isPlaying) {
+      audioRef.current?.pause();
+      setIsPlaying(false);
+      return;
+    }
+    if (activeIndex === index && audioRef.current?.src) {
+      void audioRef.current.play();
+      setIsPlaying(true);
+      return;
+    }
+    playIndex(index);
+  };
+
+  const stop = () => {
+    audioRef.current?.pause();
+    if (audioRef.current) audioRef.current.currentTime = 0;
+    setIsPlaying(false);
+    setActiveIndex(null);
+  };
+
+  const loading = audioQuery.isFetching;
+
+  return (
+    <main className="min-w-0 flex-1">
+      <audio
+        ref={audioRef}
+        onEnded={() => {
+          if (settings.autoAdvance && activeIndex !== null) playIndex(activeIndex + 1);
+          else setIsPlaying(false);
+        }}
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+      />
+
+      <header className="border-b bg-card px-6 py-8 text-center lg:px-10">
+        <div className="flex justify-end">
+          <Link
+            to="/settings"
+            className="inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-secondary-foreground"
+          >
+            <Settings2 className="h-3.5 w-3.5" />
+            Settings
+          </Link>
+        </div>
+        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          {chapter.revelation_place === "makkah" ? "Meccan" : "Medinan"} · {chapter.verses_count}{" "}
+          verses
+        </p>
+        <h2 className="mt-2 text-3xl font-bold text-card-foreground lg:text-4xl">
+          {chapter.name_simple}
+        </h2>
+        <p
+          className="mt-3 text-3xl leading-relaxed text-primary lg:text-4xl"
+          style={{ fontFamily: "var(--font-arabic)" }}
+        >
+          {chapter.name_arabic}
+        </p>
+        <p className="mt-2 text-sm italic text-muted-foreground">{chapter.translated_name.name}</p>
+
+        <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
+          <button
+            onClick={() =>
+              isPlaying
+                ? (audioRef.current?.pause(), setIsPlaying(false))
+                : toggle(activeIndex ?? 0)
+            }
+            className="inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
+          >
+            {loading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : isPlaying ? (
+              <Pause className="h-4 w-4" />
+            ) : (
+              <Play className="h-4 w-4" />
+            )}
+            {isPlaying ? "Pause recitation" : "Listen to surah"}
+          </button>
+          <button
+            onClick={() => playIndex((activeIndex ?? 0) - 1)}
+            disabled={activeIndex === null || activeIndex === 0}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full border text-muted-foreground transition-colors hover:bg-secondary disabled:opacity-40"
+            aria-label="Previous verse"
+          >
+            <SkipBack className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => playIndex((activeIndex ?? -1) + 1)}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full border text-muted-foreground transition-colors hover:bg-secondary"
+            aria-label="Next verse"
+          >
+            <SkipForward className="h-4 w-4" />
+          </button>
+          <button
+            onClick={stop}
+            disabled={activeIndex === null}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full border text-muted-foreground transition-colors hover:bg-secondary disabled:opacity-40"
+            aria-label="Stop"
+          >
+            <Square className="h-4 w-4" />
+          </button>
+        </div>
+        {audioQuery.isError && (
+          <p className="mt-3 text-xs text-destructive">
+            Recitation audio is unavailable right now. Try another reciter in Settings.
+          </p>
+        )}
+      </header>
+
+      <div className="mx-auto max-w-3xl px-6 py-8 lg:px-10 lg:py-12">
+        {chapter.bismillah_pre && (
+          <div className="mb-10 text-center">
+            <p
+              className="text-2xl leading-loose text-foreground"
+              style={{ fontFamily: "var(--font-arabic)" }}
+            >
+              بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ
+            </p>
+          </div>
+        )}
+
+        <div className="space-y-8">
+          {verses.map((verse, index) => {
+            const isActive = activeIndex === index;
+            return (
+              <article
+                key={verse.id}
+                id={`verse-${chapter.id}-${verse.verse_number}`}
+                data-verse={verse.verse_number}
+                className={[
+                  "rounded-xl border bg-card p-5 shadow-sm transition-shadow hover:shadow-md lg:p-6",
+                  isActive ? "border-primary ring-1 ring-primary/40" : "",
+                ].join(" ")}
+              >
+                <div className="mb-3 flex items-center justify-between">
+                  <span className="flex flex-wrap items-center gap-2 text-xs font-semibold text-muted-foreground">
+                    {verse.verse_key}
+                    <span className="rounded-full bg-secondary px-2 py-0.5 font-medium text-secondary-foreground">
+                      Juz {verse.juz_number}
+                    </span>
+                    <span className="rounded-full bg-secondary px-2 py-0.5 font-medium text-secondary-foreground">
+                      Page {verse.page_number}
+                    </span>
+                    {verse.sajdah && (
+                      <span className="rounded-full bg-accent px-2 py-0.5 font-medium text-accent-foreground">
+                        Sajdah ۩
+                      </span>
+                    )}
+                  </span>
+                  <button
+                    onClick={() => toggle(index)}
+                    aria-label={`Play verse ${verse.verse_key}`}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-full border text-muted-foreground transition-colors hover:bg-secondary hover:text-secondary-foreground"
+                  >
+                    {isActive && isPlaying ? (
+                      <Pause className="h-3.5 w-3.5" />
+                    ) : (
+                      <Play className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                </div>
+                {settings.wordByWord ? (
+                  <div dir="rtl" className="flex flex-wrap gap-x-4 gap-y-5 text-card-foreground">
+                    {verse.words.map((word) => (
+                      <div key={word.id} className="flex flex-col items-center text-center">
+                        <span
+                          className="leading-loose"
+                          style={{
+                            fontFamily: "var(--font-arabic)",
+                            fontSize: `${settings.arabicSize}px`,
+                          }}
+                          {...(settings.script === "tajweed"
+                            ? { dangerouslySetInnerHTML: { __html: word.tajweed_html } }
+                            : { children: word.text })}
+                        />
+                        {settings.showTransliteration && (
+                          <span dir="ltr" className="text-xs italic text-primary">
+                            {word.transliteration}
+                          </span>
+                        )}
+                        <span dir="ltr" className="max-w-28 text-xs text-muted-foreground">
+                          {word.translation}
+                        </span>
+                      </div>
+                    ))}
+                    <span className="inline-flex h-7 w-7 items-center justify-center self-center rounded-full bg-accent text-xs font-semibold text-accent-foreground">
+                      {verse.verse_number}
+                    </span>
+                  </div>
+                ) : (
+                  <p
+                    dir="rtl"
+                    className="text-right leading-loose text-card-foreground"
+                    style={{
+                      fontFamily: "var(--font-arabic)",
+                      fontSize: `${settings.arabicSize}px`,
+                    }}
+                  >
+                    {settings.script === "tajweed" ? (
+                      <span dangerouslySetInnerHTML={{ __html: verse.tajweed_html }} />
+                    ) : (
+                      verse.text_uthmani
+                    )}
+                    <span className="mx-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-accent text-xs font-semibold text-accent-foreground lg:h-7 lg:w-7">
+                      {verse.verse_number}
+                    </span>
+                  </p>
+                )}
+                {settings.showTransliteration && !settings.wordByWord && (
+                  <p className="mt-3 text-sm italic text-primary">
+                    {verse.words.map((w) => w.transliteration).join(" ")}
+                  </p>
+                )}
+                {settings.showTranslation && verse.translation && (
+                  <p className="mt-4 border-t pt-4 text-base leading-relaxed text-muted-foreground">
+                    {verse.translation}
+                  </p>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      </div>
+    </main>
+  );
+}
