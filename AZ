@@ -1,0 +1,30 @@
+import { useEffect, useState } from "react";
+import logoAsset from "@/assets/al-furqan-logo.png.asset.json";
+
+export function SplashScreen() {
+  const [visible, setVisible] = useState(true);
+  const [fading, setFading] = useState(false);
+
+  useEffect(() => {
+    const fadeTimer = window.setTimeout(() => setFading(true), 1400);
+    const removeTimer = window.setTimeout(() => setVisible(false), 2000);
+    return () => {
+      window.clearTimeout(fadeTimer);
+      window.clearTimeout(removeTimer);
+    };
+  }, []);
+
+  if (!visible) return null;
+
+  return (
+    <div
+      aria-hidden={fading}
+      className={`fixed inset-0 z-[100] flex flex-col items-center justify-center gap-5 bg-background transition-opacity duration-600 ${
+        fading ? "pointer-events-none opacity-0" : "opacity-100"
+      }`}
+    >
+      <img src={logoAsset.url} alt="" className="h-24 w-24 rounded-full shadow-lg" />
+      <p className="font-serif text-lg tracking-wide text-muted-foreground">Created by NFS Group</p>
+    </div>
+  );
+}
