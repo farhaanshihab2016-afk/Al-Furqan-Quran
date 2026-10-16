@@ -1,0 +1,119 @@
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
+
+export const RECITERS = [
+  { id: 7, name: "Mishary Rashid Alafasy" },
+  { id: 2, name: "AbdulBaset AbdulSamad (Murattal)" },
+  { id: 1, name: "AbdulBaset AbdulSamad (Mujawwad)" },
+  { id: 3, name: "Abdur-Rahman as-Sudais" },
+  { id: 4, name: "Abu Bakr al-Shatri" },
+  { id: 5, name: "Hani ar-Rifai" },
+  { id: 6, name: "Mahmoud Khalil Al-Husary" },
+] as const;
+
+export interface Settings {
+  reciterId: number;
+  showTranslation: boolean;
+  arabicSize: number;
+  theme: "light" | "dark";
+  autoAdvance: boolean;
+  script: "uthmani" | "tajweed";
+  wordByWord: boolean;
+  showTransliteration: boolean;
+}
+
+const DEFAULTS: Settings = {
+  reciterId: 7,
+  showTranslation: true,
+  arabicSize: 30,
+  theme: "light",
+  autoAdvance: true,
+  script: "uthmani",
+  wordByWord: false,
+  showTransliteration: false,
+};
+
+const LAST_READ_KEY = "al-furqan-last-read";
+
+export interface LastRead {
+  surah: number;
+  verse: number;
+}
+
+export function saveLastRead(value: LastRead) {
+  try {
+    window.localStorage.setItem(LAST_READ_KEY, JSON.stringify(value));
+  } catch {
+    /* ignore quota errors */
+  }
+}
+
+export function loadLastRead(): LastRead | null {
+  try {
+    const raw = window.localStorage.getItem(LAST_READ_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<LastRead>;
+    if (typeof parsed.surah !== "number" || parsed.surah < 1 || parsed.surah > 114) return null;
+    return { surah: parsed.surah, verse: typeof parsed.verse === "number" ? parsed.verse : 1 };
+  } catch {
+    return null;
+  }
+}
+
+const STORAGE_KEY = "al-furqan-settings";
+
+interface SettingsContextValue {
+  settings: Settings;
+  update: (patch: Partial<Settings>) => void;
+  reset: () => void;
+}
+
+const SettingsContext = createContext<SettingsContextValue | null>(null);
+
+export function SettingsProvider({ children }: { children: ReactNode }) {
+  const [settings, setSettings] = useState<Settings>(DEFAULTS);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (raw) setSettings({ ...DEFAULTS, ...(JSON.parse(raw) as Partial<Settings>) });
+    } catch {
+      /* ignore malformed storage */
+    }
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", settings.theme === "dark");
+  }, [settings.theme]);
+
+  const update = useCallback((patch: Partial<Settings>) => {
+    setSettings((prev) => {
+      const next = { ...prev, ...patch };
+      try {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        /* ignore quota errors */
+      }
+      return next;
+    });
+  }, []);
+
+  const reset = useCallback(() => {
+    setSettings(DEFAULTS);
+    try {
+      window.localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const value = useMemo(() => ({ settings, update, reset }), [settings, update, reset]);
+
+  return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
+}
+
+export function useSettings() {
+  const ctx = useContext(SettingsContext);
+  if (!ctx) throw new Error("useSettings must be used within SettingsProvider");
+  return ctx;
+}
